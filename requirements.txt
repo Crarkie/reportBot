@@ -1,0 +1,10 @@
+sanic
+aiohttp
+aiodns
+cchardet
+gino
+ujson
+alembic
+psycopg2-binary
+base58
+phonenumbers

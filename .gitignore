@@ -1,0 +1,4 @@
+.idea/*
+db.dbs
+db.dbs.bak
+venv/*
