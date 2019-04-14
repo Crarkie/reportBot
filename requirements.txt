@@ -1,4 +1,5 @@
 sanic
+sanic_cors
 aiohttp
 aiodns
 cchardet
@@ -8,3 +9,6 @@ alembic
 psycopg2-binary
 base58
 phonenumbers
+pygsheets
+aiomysql
+PyJWT

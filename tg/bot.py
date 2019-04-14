@@ -1,7 +1,7 @@
 from . import *
 from aiohttp import ClientSession
 import ujson as json
-__all__ = ['BotAPI']
+__all__ = ['BotAPI', 'ApiException']
 
 API_URL = 'https://api.telegram.org/bot{self}/{method_name}'
 FILE_URL = 'https://api.telegram.org/file/bot{self}/{file_id}'
