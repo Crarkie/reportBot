@@ -10,6 +10,7 @@ class Config:
     SHEET_SERVICE_FILE = 'reportBot-ea76a23c984b.json'
     SHEET_URL = 'https://docs.google.com/spreadsheets/d/1Cajzpn5G33mmiaAJqkCcW0V0e1UupRl4k9Fm8I-7It4'
     SECRET_KEY = 'lzrldz56q&yy_xa&1cfqjv@@k@y+n_yuja9toh(r!6trp%80cn'
+    SERVER_NAME = 'crarkie.site'
 
     IDLE_REPORT_TIME = 15
     FILL_REPORT_TIME = 20

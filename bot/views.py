@@ -599,6 +599,9 @@ class ApproveReportView(DialogView):
     async def revision_comment_handler(self, update: Update):
         text = update.message.text
 
+        await self._bot.delete_message(self._leader.chat_id,
+                                       update.message.message_id)
+
         await users[self._employee.chat_id].revision_report(self._report_view, comment=text)
         await self._bot.answer_callback_query(self._callback_id, 'Отправлен на доработку')
         await self._bot.delete_message(self._leader.chat_id, self._msg)
@@ -616,9 +619,13 @@ class LeaderMainView(DialogView):
         self.markup = ReplyKeyboardMarkup(resize_keyboard=True)
         self.markup.add(KeyboardButton(self.create_invite_button))
         self.markup.add(KeyboardButton(self.subordinate_list_button))
+        self._last_msg = None
+        self._restore = False
         super(LeaderMainView, self).__init__(bot_api)
 
     async def approve_report(self, report_view):
+        if self.state == 'subordinate_list':
+            self._restore = True
         self.approve_list.append(ApproveReportView(self._leader, report_view, self._bot))
         if len(self.approve_list) == 1:
             await self.approve_list[0].report()
@@ -637,9 +644,10 @@ class LeaderMainView(DialogView):
     async def start_view(self, update: Update):
         user_id = self._leader.chat_id
 
-        await self._bot.send_message(user_id,
-                                     'Выберите необходимый пункт меню',
-                                     reply_markup=self.markup)
+        message = await self._bot.send_message(user_id,
+                                               'Выберите необходимый пункт меню',
+                                               reply_markup=self.markup)
+        self._last_msg = message['message_id']
 
     async def _create_invite_action(self):
         new_employee = await Employee.create(leader_id=self._leader.employee_id, employee_role='subordinate')
@@ -654,19 +662,24 @@ class LeaderMainView(DialogView):
                                      'Пригласительный код для сотрудника\n(Автоматически истекает через 3 дня): ')
         await self._bot.send_message(self._leader.chat_id,
                                      '*{}*'.format(invite.invite_code),
-                                     parse_mode='Markdown')
+                                     parse_mode='Markdown',
+                                     reply_markup=self.markup)
 
     async def _subordinate_list_action(self, update: Update):
-        message = await self._bot.send_message(self._leader.chat_id,
-                                               'Список сотрудников',
-                                               reply_markup=ReplyKeyboardRemove())
-        await self._bot.delete_message(self._leader.chat_id, message['message_id'])
         self.subordinate_view = SubordinateListView(self._leader, self._bot)
         await self.subordinate_view.start_view(update)
 
     @DialogView.message_handler(STATUS_START)
     async def menu_handler(self, update: Update):
         text = update.message.text
+
+        if self._last_msg:
+            await self._bot.delete_message(self._leader.chat_id,
+                                           self._last_msg)
+            self._last_msg = None
+
+        await self._bot.delete_message(self._leader.chat_id,
+                                       update.message.message_id)
 
         if text == self.create_invite_button:
             await self._create_invite_action()
@@ -692,6 +705,9 @@ class LeaderMainView(DialogView):
                 await self.approve_list[0].report()
             else:
                 self.state = STATUS_START
+                if self._restore:
+                    self._restore = False
+                    await self.start_view(update)
 
 
 class SubordinateMainView(DialogView):
@@ -721,6 +737,7 @@ class SubordinateMainView(DialogView):
                         KeyboardButton(self.submit_report_button))
         self.report_view = None
         self.vacation_view = None
+        self._last_msg = None
 
         super(SubordinateMainView, self).__init__(bot_api)
 
@@ -742,9 +759,10 @@ class SubordinateMainView(DialogView):
     async def start_view(self, update: Update):
         user_id = self._employee.chat_id
 
-        await self._bot.send_message(user_id,
-                                     'Выберите необходимый пункт меню:',
-                                     reply_markup=self.markup)
+        message = await self._bot.send_message(user_id,
+                                               'Выберите необходимый пункт меню:',
+                                               reply_markup=self.markup)
+        self._last_msg = message['message_id']
 
     async def _leader_info_action(self):
         leader = await Employee.query.where(Employee.employee_id == self._employee.leader_id).gino.first()
@@ -752,20 +770,35 @@ class SubordinateMainView(DialogView):
         formatted_phone = phonenumbers.parse('+' + str(leader.phone_number))
         formatted_phone = phonenumbers.format_number(formatted_phone, phonenumbers.PhoneNumberFormat.NATIONAL)
 
-        await self._bot.send_message(self._employee.chat_id,
-                                     "Ваш руководитель:\n{}\nТел.: {}".format(str(leader),
-                                                                              formatted_phone))
+        message = await self._bot.send_message(self._employee.chat_id,
+                                               "Ваш руководитель:\n{}\nТел.: {}".format(str(leader),
+                                                                                        formatted_phone),
+                                               reply_markup=self.markup)
+        self._last_msg = message['message_id']
+
+    async def delete_last(self):
+        if self._last_msg:
+            await self._bot.delete_message(self._employee.chat_id,
+                                           self._last_msg)
+            self._last_msg = None
 
     @DialogView.message_handler(STATUS_START)
     async def menu_handler(self, update: Update):
         self._employee = await Employee.get(self._employee.employee_id)
         text = update.message.text
 
+        await self._bot.delete_message(self._employee.chat_id,
+                                       update.message.message_id)
+
         if text == self.leader_info_button:
+            await self.delete_last()
             await self._leader_info_action()
         elif text == self.reference_button:
-            await self._bot.send_message(self._employee.chat_id,
-                                         self.reference_text)
+            await self.delete_last()
+            message = await self._bot.send_message(self._employee.chat_id,
+                                                   self.reference_text,
+                                                   reply_markup=self.markup)
+            self._last_msg = message['message_id']
         elif text == self.vacation_button:
             if self._employee.vacation_to and self._employee.vacation_from:
                 now = datetime.now().date()
@@ -774,33 +807,53 @@ class SubordinateMainView(DialogView):
                     days_left = (self._employee.vacation_to - now).days
                     days_left = ', осталось {} дней.'.format(days_left)
 
-                await self._bot.send_message(self._employee.chat_id,
-                                             'У вас уже назначен отпуск, либо больничный.\n'
-                                             '📅 {} - {}{}\n'
-                                             'Чтобы его отменить, обратитесь к своему руководителю.\n'
-                                             .format(self._employee.vacation_from.strftime('%d/%m/%Y'),
-                                                     self._employee.vacation_to.strftime('%d/%m/%Y'),
-                                                     days_left))
+                await self.delete_last()
+                message = await self._bot.send_message(self._employee.chat_id,
+                                                       'У вас уже назначен отпуск, либо больничный.\n'
+                                                       '📅 {} - {}{}\n'
+                                                       'Чтобы его отменить, обратитесь к своему руководителю.\n'
+                                                       .format(self._employee.vacation_from.strftime('%d/%m/%Y'),
+                                                               self._employee.vacation_to.strftime('%d/%m/%Y'),
+                                                               days_left),
+                                                       reply_markup=self.markup)
+                self._last_msg = message['message_id']
                 return
             self.state = 'choice_vacation'
             self.vacation_view = VacationView(self._bot)
             await self.vacation_view.start_view(update)
         elif text == self.submit_report_button:
-            await self.report_notify()
-            return
             today = datetime.now().date()
+            date = str(today.year) + str(today.month).zfill(2) + str(today.day).zfill(2)
+
+            try:
+                async with app.session.get('https://isdayoff.ru/' + date + '?cc=ru') as resp:
+                    if int(await resp.text()) == 1:
+                        await self.delete_last()
+                        message = await self._bot.send_message(self._employee.chat_id,
+                                                               'Вы не можете сдать отчет, так как сегодня не рабочий день.',
+                                                               reply_markup=self.markup)
+                        self._last_msg = message['message_id']
+                        return
+            except:  # anti service-break security :)
+                pass
 
             if self._employee.vacation_to and self._employee.vacation_from:
-                if sub.vacation_from <= datetime.now().date() < sub.vacation_to:
-                    await self._bot.send_message(self._employee.chat_id,
-                                                 'Вы не можете сдать отчет, так как у вас назначен отпуск (больничный)\n'
-                                                 'Чтобы его отменить, обратитесь к своему руководителю')
+                if self._employee.vacation_from <= datetime.now().date() < self._employee.vacation_to:
+                    await self.delete_last()
+                    message = await self._bot.send_message(self._employee.chat_id,
+                                                           'Вы не можете сдать отчет, так как у вас назначен отпуск (больничный)\n'
+                                                           'Чтобы его отменить, обратитесь к своему руководителю.',
+                                                           reply_markup=self.markup)
+                    self._last_msg = message['message_id']
                     return
 
             report = await Report.query.where(db.and_(Report.report_date == today, Report.employee_id == self._employee.employee_id)).gino.first()
             if report:
-                await self._bot.send_message(self._employee.chat_id,
-                                             'Вы сегодня уже сдали отчет!')
+                await self.delete_last()
+                message = await self._bot.send_message(self._employee.chat_id,
+                                                       'Вы сегодня уже сдали отчет!',
+                                                       reply_markup=self.markup)
+                self._last_msg = message['message_id']
                 return
 
             report_hour, report_minute = map(int, Config.REPORT_TIME.split(':'))
@@ -814,9 +867,12 @@ class SubordinateMainView(DialogView):
                 is_time = True
 
             if not is_time:
-                await self._bot.send_message(self._employee.chat_id,
-                                             'Сдача отчета возможна только после *{}*.'.format(Config.REPORT_TIME),
-                                             parse_mode='Markdown')
+                await self.delete_last()
+                message = await self._bot.send_message(self._employee.chat_id,
+                                                       'Сдача отчета возможна только после *{}*.'.format(Config.REPORT_TIME),
+                                                       parse_mode='Markdown',
+                                                       reply_markup=self.markup)
+                self._last_msg = message['message_id']
             else:
                 await self.report_notify()
         else:
@@ -827,7 +883,7 @@ class SubordinateMainView(DialogView):
         if self.report_view.completed:
             self.report_view = None
             self.state = STATUS_START
-            await self.start_view(update)
+            await self.process(update)
             return
 
         if await self.report_view.process(update):
@@ -846,7 +902,7 @@ class SubordinateMainView(DialogView):
         if self.report_view.completed:
             self.report_view = None
             self.state = STATUS_START
-            await self.start_view(update)
+            await self.process(update)
             return
         await self.report_view.process(update)
 
@@ -871,7 +927,6 @@ class SubordinateMainView(DialogView):
 
             self.vacation_view = None
             self.state = STATUS_START
-            await self.start_view(update)
 
 
 class ReportView(DialogView):
@@ -1105,6 +1160,10 @@ _{{}}_, добрый вечер.
             _add_task(self._fill_task)
 
         query = update.message.text
+
+        await self._bot.delete_message(self._employee.chat_id,
+                                       update.message.message_id)
+
         self._found = await (await search_active_projects(query)).gino.all()
         if len(self._found) > self.pagination_count:
             self._found = self._found[:self.pagination_count]
@@ -1281,6 +1340,9 @@ _{{}}_, добрый вечер.
 
         await self._bot.delete_message(self._employee.chat_id,
                                        self._last_msg)
+
+        await self._bot.delete_message(self._employee.chat_id,
+                                       update.message.message_id)
 
         try:
             value = int(text)

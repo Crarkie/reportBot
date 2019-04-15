@@ -19,7 +19,7 @@ async def init(app, loop):
 
 @app.listener('after_server_start')
 async def after(app, loop):
-    await app.bot.set_webhook('crarkie.site/bot/{}'.format(Config.BOT_TOKEN))
+    await app.bot.set_webhook('{}/bot/{}'.format(Config.SERVER_NAME, Config.BOT_TOKEN))
     await reload_users(app.bot)
 
     app.parser_task = loop.create_task(run_parser())
